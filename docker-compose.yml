@@ -1,0 +1,83 @@
+services:
+
+  ssh-init:
+    image: alpine:latest
+    container_name: hugo-ssh-init
+    volumes:
+      - ssh-keys:/root/.ssh
+    command: >
+      sh -c "
+        apk add --no-cache openssh-keygen > /dev/null 2>&1 &&
+        mkdir -p /root/.ssh &&
+        chmod 700 /root/.ssh &&
+        if [ ! -f /root/.ssh/id_ed25519 ]; then
+          ssh-keygen -t ed25519 -C 'hugo-deployer' -f /root/.ssh/id_ed25519 -N '' &&
+          chmod 600 /root/.ssh/id_ed25519 &&
+          chmod 644 /root/.ssh/id_ed25519.pub &&
+          echo '' &&
+          echo 'Generated SSH deploy key.' &&
+          echo 'Please add following public key:' &&
+          cat /root/.ssh/id_ed25519.pub
+        else
+          echo 'SSH Key already present. Skip generating.' &&
+          echo 'Public Key:' &&
+          cat /root/.ssh/id_ed25519.pub
+        fi
+      "
+    restart: "no"
+
+  deployer:
+    build:
+      context: ./deployer
+      args:
+        HUGO_VERSION: ${HUGO_VERSION:-0.159.1}
+    container_name: hugo-deployer
+    restart: unless-stopped
+    depends_on:
+      ssh-init:
+        condition: service_completed_successfully
+    environment:
+      GIT_REPO_URL:      ${GIT_REPO_URL}
+      GIT_BRANCH:        ${GIT_BRANCH:-main}
+      WEBHOOK_SECRET:    ${WEBHOOK_SECRET}
+      HUGO_EXTRA_FLAGS:  ${HUGO_EXTRA_FLAGS:-}
+      TZ:                ${TZ:-Europe/Vienna}
+
+    volumes:
+      - ssh-keys:/root/.ssh
+      - hugo-public:/public
+
+    ports:
+      - "${WEBHOOK_PORT:-9000}:9000"
+    networks:
+      - internal
+
+  nginx:
+    image: nginx:alpine
+    container_name: hugo-nginx
+    restart: unless-stopped
+    volumes:
+      - hugo-public:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:rw
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    networks:
+      - internal
+    depends_on:
+      - deployer
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qSO/dev/null http://127.0.0.1/ 2>&1 | grep -q 'HTTP/' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  hugo-public:
+    driver: local
+  ssh-keys:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge
