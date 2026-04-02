@@ -35,7 +35,7 @@ hugo-auto-deployer/
 
 ### 1. Clone this repo
 
-If git is installed: `git clone `
+If git is installed: `git clone https://github.com/erik-toth/hugo-auto-deployer.git`
 
 ### 2. Config
 
